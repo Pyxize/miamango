@@ -4,134 +4,383 @@ export type ReelInfo = {
   platform: Platform;
   url: string;
   canonicalUrl: string;
+
   author: string | null;
   authorHandle: string | null;
   authorUrl: string | null;
+
   title: string | null;
+  description: string | null;
+
   thumbnail: string | null;
   videoId: string | null;
-  raw: Record<string, unknown>;
+
+  raw?: Record<string, unknown>;
 };
 
+const TIKTOK_HOSTS = new Set([
+  'tiktok.com',
+  'www.tiktok.com',
+  'vm.tiktok.com',
+  'vt.tiktok.com',
+  'm.tiktok.com',
+]);
+
+const INSTAGRAM_HOSTS = new Set([
+  'instagram.com',
+  'www.instagram.com',
+  'm.instagram.com',
+]);
+
 const BROWSER_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const FB_CRAWLER_UA = 'facebookexternalhit/1.1';
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
+    'AppleWebKit/537.36 (KHTML, like Gecko) ' +
+    'Chrome/120.0.0.0 Safari/537.36';
 
-const TIKTOK_HOSTS = ['tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com', 'm.tiktok.com'];
-const INSTAGRAM_HOSTS = ['instagram.com', 'www.instagram.com', 'm.instagram.com'];
+const FACEBOOK_CRAWLER_UA = 'facebookexternalhit/1.1';
 
+/**
+ * Détecte la plateforme depuis l'URL.
+ */
 export function detectPlatform(url: string): Platform | null {
   try {
     const { hostname } = new URL(url);
     const host = hostname.toLowerCase();
-    if (TIKTOK_HOSTS.some((h) => host === h || host.endsWith('.' + h))) return 'tiktok';
-    if (INSTAGRAM_HOSTS.some((h) => host === h || host.endsWith('.' + h))) return 'instagram';
+
+    if (
+        TIKTOK_HOSTS.has(host) ||
+        host.endsWith('.tiktok.com')
+    ) {
+      return 'tiktok';
+    }
+
+    if (
+        INSTAGRAM_HOSTS.has(host) ||
+        host.endsWith('.instagram.com')
+    ) {
+      return 'instagram';
+    }
+
     return null;
   } catch {
     return null;
   }
 }
 
-function decodeEntities(str: string): string {
-  return str
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)))
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>');
+/**
+ * Extrait une meta tag sans dépendre de l'ordre des attributs.
+ *
+ * Supporte :
+ * <meta property="og:image" content="...">
+ * <meta content="..." property="og:image">
+ */
+function extractMeta(
+    html: string,
+    attribute: 'property' | 'name',
+    value: string,
+): string | null {
+  const escapedValue = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const tagRegex = /<meta\b[^>]*>/gi;
+  const tags = html.match(tagRegex);
+
+  if (!tags) return null;
+
+  for (const tag of tags) {
+    const attributeRegex = new RegExp(
+        `${attribute}\\s*=\\s*["']${escapedValue}["']`,
+        'i',
+    );
+
+    if (!attributeRegex.test(tag)) continue;
+
+    const contentMatch = tag.match(
+        /content\s*=\s*["']([^"']*)["']/i,
+    );
+
+    if (contentMatch?.[1]) {
+      return decodeHtmlEntities(contentMatch[1]);
+    }
+  }
+
+  return null;
 }
 
-function extractMeta(html: string, key: 'property' | 'name', value: string): string | null {
-  const re = new RegExp(
-    `<meta\\s+${key}=["']${value}["']\\s+content=["']([^"']+)["']`,
-    'i'
-  );
-  const m = html.match(re) || html.match(
-    new RegExp(`<meta\\s+content=["']([^"']+)["']\\s+${key}=["']${value}["']`, 'i')
-  );
-  return m ? decodeEntities(m[1]) : null;
+/**
+ * Décodage basique des HTML entities présentes dans les meta tags.
+ */
+function decodeHtmlEntities(value: string): string {
+  return value
+      .replace(/&#(\d+);/g, (_, code) =>
+          String.fromCharCode(Number(code)),
+      )
+      .replace(/&#x([0-9a-f]+);/gi, (_, code) =>
+          String.fromCharCode(parseInt(code, 16)),
+      )
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>');
 }
 
-export async function fetchTikTok(url: string): Promise<ReelInfo> {
-  const oembedUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`;
-  const res = await fetch(oembedUrl, { headers: { 'User-Agent': BROWSER_UA } });
-  if (!res.ok) throw new Error(`TikTok oEmbed HTTP ${res.status}`);
-  const data = (await res.json()) as Record<string, any>;
+/**
+ * Extrait le shortcode Instagram.
+ */
+function extractInstagramId(url: string): string | null {
+  const match = url.match(
+      /\/(?:reel|reels|p)\/([A-Za-z0-9_-]+)/i,
+  );
 
-  const canonicalMatch = typeof data.html === 'string' ? data.html.match(/cite="([^"]+)"/) : null;
-  const canonicalUrl = canonicalMatch?.[1] ?? url;
+  return match?.[1] ?? null;
+}
+
+/**
+ * Extrait le handle depuis une URL Instagram.
+ */
+function extractInstagramHandle(url: string): string | null {
+  try {
+    const pathname = new URL(url).pathname;
+
+    const match = pathname.match(
+        /^\/([^/]+)\/(?:reel|reels|p)\//i,
+    );
+
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * TikTok
+ *
+ * API officielle oEmbed.
+ */
+export async function fetchTikTok(
+    url: string,
+): Promise<ReelInfo> {
+  const endpoint =
+      `https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`;
+
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': BROWSER_UA,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+        `TikTok oEmbed HTTP ${response.status}`,
+    );
+  }
+
+  const data = (await response.json()) as Record<
+      string,
+      unknown
+  >;
+
+  const html =
+      typeof data.html === 'string'
+          ? data.html
+          : null;
+
+  const canonicalUrl =
+      html?.match(/cite=["']([^"']+)["']/i)?.[1] ??
+      url;
 
   return {
     platform: 'tiktok',
     url,
     canonicalUrl,
-    author: data.author_name ?? null,
-    authorHandle: data.author_unique_id ?? null,
-    authorUrl: data.author_url ?? null,
-    title: data.title ?? null,
-    thumbnail: data.thumbnail_url ?? null,
-    videoId: data.embed_product_id ?? null,
+
+    author:
+        typeof data.author_name === 'string'
+            ? data.author_name
+            : null,
+
+    authorHandle:
+        typeof data.author_unique_id === 'string'
+            ? data.author_unique_id
+            : null,
+
+    authorUrl:
+        typeof data.author_url === 'string'
+            ? data.author_url
+            : null,
+
+    title:
+        typeof data.title === 'string'
+            ? data.title
+            : null,
+
+    description:
+        typeof data.title === 'string'
+            ? data.title
+            : null,
+
+    thumbnail:
+        typeof data.thumbnail_url === 'string'
+            ? data.thumbnail_url
+            : null,
+
+    videoId:
+        typeof data.embed_product_id === 'string'
+            ? data.embed_product_id
+            : null,
+
     raw: data,
   };
 }
 
-export async function fetchInstagram(url: string): Promise<ReelInfo> {
-  const res = await fetch(url, {
+/**
+ * Instagram
+ *
+ * Récupération des Open Graph metadata.
+ */
+export async function fetchInstagram(
+    url: string,
+): Promise<ReelInfo> {
+  const response = await fetch(url, {
     headers: {
-      'User-Agent': FB_CRAWLER_UA,
-      Accept: 'text/html',
+      Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+
+      'User-Agent': FACEBOOK_CRAWLER_UA,
     },
   });
-  if (!res.ok) throw new Error(`Instagram HTTP ${res.status}`);
-  const html = await res.text();
 
-  const ogImage = extractMeta(html, 'property', 'og:image');
-  const ogUrl = extractMeta(html, 'property', 'og:url');
-  const twitterTitle = extractMeta(html, 'name', 'twitter:title');
-  const ogTitle = extractMeta(html, 'property', 'og:title');
-  const ogDescription = extractMeta(html, 'property', 'og:description');
-
-  let authorHandle: string | null = null;
-  let author: string | null = null;
-
-  const usernameMatch = ogUrl?.match(/instagram\.com\/([^/]+)\/(?:reel|reels|p)\//i);
-  if (usernameMatch) authorHandle = usernameMatch[1];
-
-  const titleSrc = twitterTitle || ogTitle;
-  if (titleSrc) {
-    const nameMatch = titleSrc.match(/^(.+?)\s*\(@([^)]+)\)/);
-    if (nameMatch) {
-      author = nameMatch[1].trim();
-      authorHandle = authorHandle ?? nameMatch[2].trim();
-    } else {
-      author = titleSrc.trim();
-    }
+  if (!response.ok) {
+    throw new Error(
+        `Instagram HTTP ${response.status}`,
+    );
   }
 
-  const shortcodeMatch = url.match(/\/(?:reel|reels|p)\/([A-Za-z0-9_-]+)/);
-  const videoId = shortcodeMatch?.[1] ?? null;
+  const html = await response.text();
+
+  const ogTitle = extractMeta(
+      html,
+      'property',
+      'og:title',
+  );
+
+  const ogDescription = extractMeta(
+      html,
+      'property',
+      'og:description',
+  );
+
+  const ogImage = extractMeta(
+      html,
+      'property',
+      'og:image',
+  );
+
+  const ogUrl = extractMeta(
+      html,
+      'property',
+      'og:url',
+  );
+
+  const twitterTitle = extractMeta(
+      html,
+      'name',
+      'twitter:title',
+  );
+
+  const canonicalUrl =
+      ogUrl ?? url;
+
+  const videoId =
+      extractInstagramId(canonicalUrl) ??
+      extractInstagramId(url);
+
+  let authorHandle =
+      extractInstagramHandle(canonicalUrl) ??
+      extractInstagramHandle(url);
+
+  let author: string | null = null;
+
+  /**
+   * Exemple fréquent :
+   *
+   * "Maxime BNT (@maximebnt) • Instagram photos..."
+   */
+  const title =
+      twitterTitle ??
+      ogTitle ??
+      null;
+
+  if (title) {
+    const authorMatch = title.match(
+        /^(.+?)\s*\(@([^)]+)\)/,
+    );
+
+    if (authorMatch) {
+      author = authorMatch[1].trim();
+      authorHandle =
+          authorHandle ??
+          authorMatch[2].trim();
+    }
+  }
 
   return {
     platform: 'instagram',
     url,
-    canonicalUrl: ogUrl ?? url,
+    canonicalUrl,
+
     author,
     authorHandle,
-    authorUrl: authorHandle ? `https://www.instagram.com/${authorHandle}/` : null,
-    title: ogDescription ?? null,
+
+    authorUrl: authorHandle
+        ? `https://www.instagram.com/${authorHandle}/`
+        : null,
+
+    title,
+    description: ogDescription,
+
     thumbnail: ogImage,
+
     videoId,
-    raw: { ogImage, ogUrl, ogTitle, ogDescription, twitterTitle },
+
+    raw: {
+      ogTitle,
+      ogDescription,
+      ogImage,
+      ogUrl,
+      twitterTitle,
+    },
   };
 }
 
-export async function fetchReelInfo(url: string): Promise<ReelInfo> {
-  const trimmed = url.trim();
-  const platform = detectPlatform(trimmed);
-  if (!platform) throw new Error('URL non reconnue (attendu : instagram.com ou tiktok.com)');
-  if (platform === 'tiktok') return fetchTikTok(trimmed);
-  return fetchInstagram(trimmed);
+/**
+ * Fonction principale.
+ */
+export async function fetchReelInfo(
+    url: string,
+): Promise<ReelInfo> {
+  const normalizedUrl = url.trim();
+
+  if (!normalizedUrl) {
+    throw new Error('URL vide');
+  }
+
+  const platform =
+      detectPlatform(normalizedUrl);
+
+  if (!platform) {
+    throw new Error(
+        'URL non reconnue. Instagram et TikTok uniquement.',
+    );
+  }
+
+  switch (platform) {
+    case 'tiktok':
+      return fetchTikTok(normalizedUrl);
+
+    case 'instagram':
+      return fetchInstagram(normalizedUrl);
+  }
 }
