@@ -1,0 +1,37 @@
+import type React from 'react';
+import * as G from '@gluestack-ui/themed';
+
+type AnyComponent = React.ComponentType<any>;
+
+export const Box: AnyComponent = G.Box;
+export const HStack: AnyComponent = G.HStack;
+export const VStack: AnyComponent = G.VStack;
+export const Text: AnyComponent = G.Text;
+export const Heading: AnyComponent = G.Heading;
+export const Pressable: AnyComponent = G.Pressable;
+export const Image: AnyComponent = G.Image;
+export const Input: AnyComponent = G.Input;
+export const InputField: AnyComponent = G.InputField;
+export const Button: AnyComponent = G.Button;
+export const ButtonText: AnyComponent = G.ButtonText;
+export const Badge: AnyComponent = G.Badge;
+export const BadgeText: AnyComponent = G.BadgeText;
+export const Spinner: AnyComponent = G.Spinner;
+export const Alert: AnyComponent = G.Alert;
+export const AlertText: AnyComponent = G.AlertText;
+export const Fab: AnyComponent = G.Fab;
+export const FabIcon: AnyComponent = G.FabIcon;
+export const AddIcon: AnyComponent = G.AddIcon;
+export const AlertDialog: AnyComponent = G.AlertDialog;
+export const AlertDialogBackdrop: AnyComponent = G.AlertDialogBackdrop;
+export const AlertDialogContent: AnyComponent = G.AlertDialogContent;
+export const AlertDialogHeader: AnyComponent = G.AlertDialogHeader;
+export const AlertDialogBody: AnyComponent = G.AlertDialogBody;
+export const AlertDialogFooter: AnyComponent = G.AlertDialogFooter;
+export const Modal: AnyComponent = G.Modal;
+export const ModalBackdrop: AnyComponent = G.ModalBackdrop;
+export const ModalContent: AnyComponent = G.ModalContent;
+export const ModalHeader: AnyComponent = G.ModalHeader;
+export const ModalBody: AnyComponent = G.ModalBody;
+export const ModalFooter: AnyComponent = G.ModalFooter;
+export const ModalCloseButton: AnyComponent = G.ModalCloseButton;
