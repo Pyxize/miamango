@@ -1,6 +1,8 @@
 import type React from 'react';
 import * as G from '@gluestack-ui/themed';
 
+export { theme, colors, radii, space, fonts, shadow } from './theme';
+
 type AnyComponent = React.ComponentType<any>;
 
 export const Box: AnyComponent = G.Box;

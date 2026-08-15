@@ -1,38 +1,35 @@
-import {
-  Box,
-  VStack,
-  HStack,
-  Text,
-  Button,
-  ButtonText,
-  Input,
-  InputField,
-  Image,
-  Spinner,
-  Alert,
-  AlertText,
-  Badge,
-  BadgeText,
-  Pressable,
-} from '../src/ui';
 import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Platform as RNPlatform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { colors, fonts, radii } from '../src/theme';
 import { fetchReelInfo, ReelInfo } from '../src/scraper';
 import {
-  insertReel,
-  makeId,
-  listFolders,
-  Folder,
   addReelToFolder,
-  getOrCreateDefaultFolder,
   DEFAULT_FOLDER_NAME,
+  Folder,
+  getOrCreateDefaultFolder,
+  insertReel,
+  listFolders,
+  makeId,
 } from '../src/repo';
 import { cacheThumbnail } from '../src/thumbnails';
 import { parseRecipe, ParsedRecipe } from '../src/recipe';
 import { extractTitle, stripEmojis } from '../src/text';
+import { FolderChip, PlatformBadge, RecipePill } from '../src/components';
 
 export default function AddScreen() {
   const router = useRouter();
@@ -49,10 +46,7 @@ export default function AddScreen() {
   const recipe: ParsedRecipe = useMemo(() => parseRecipe(info?.title), [info?.title]);
 
   useEffect(() => {
-    (async () => {
-      const list = await listFolders();
-      setFolders(list);
-    })();
+    (async () => setFolders(await listFolders()))();
   }, []);
 
   const analyze = useCallback(async (u: string) => {
@@ -99,7 +93,9 @@ export default function AddScreen() {
     setSaving(true);
     try {
       const id = makeId(info.platform, info.videoId, info.url);
-      const localThumb = info.thumbnail ? await cacheThumbnail(info.thumbnail, id) : null;
+      const localThumb = info.thumbnail
+        ? await cacheThumbnail(info.thumbnail, id)
+        : null;
       await insertReel({
         id,
         platform: info.platform,
@@ -124,177 +120,410 @@ export default function AddScreen() {
         await addReelToFolder(id, folderId);
       }
 
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.back();
     } catch (e: any) {
       const msg = e?.message ?? String(e);
       const detail = e?.cause?.message ?? e?.stack?.split('\n')[0] ?? '';
-      console.error('[save] failed:', e);
-      setError(`Sauvegarde échouée : ${msg}${detail && detail !== msg ? '\n' + detail : ''}`);
+      setError(
+        `Sauvegarde échouée : ${msg}${detail && detail !== msg ? '\n' + detail : ''}`
+      );
     } finally {
       setSaving(false);
     }
   };
 
+  const cleanTitle = info ? extractTitle(info.title, info.platform) : null;
+  const cleanAuthor = info?.author ? stripEmojis(info.author) : null;
+
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: '#0b0b0f' }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+      style={{ flex: 1, backgroundColor: colors.paper }}
+      behavior={RNPlatform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={RNPlatform.OS === 'ios' ? 0 : 24}
     >
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 24 + insets.bottom, gap: 16 }}
+        contentContainerStyle={{
+          padding: 20,
+          paddingBottom: 32 + insets.bottom,
+          gap: 20,
+        }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text color="#a1a1aa">Colle une URL Instagram Reel ou TikTok</Text>
+        <View style={{ gap: 6 }}>
+          <StepLabel index={1} label={info ? 'Lien collé' : 'Coller un lien'} done={!!info} />
+          <Text style={styles.stepHint}>
+            Instagram Reel ou TikTok — presse sur Coller si c'est déjà dans le presse-papier.
+          </Text>
+        </View>
 
-        <Input variant="outline" bg="#17171d" borderColor="#27272e">
-          <InputField
+        <View style={styles.urlWrap}>
+          <TextInput
             placeholder="https://…"
-            placeholderTextColor="#71717a"
-            color="#fff"
+            placeholderTextColor={colors.inkFaint}
             value={url}
             onChangeText={setUrl}
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
+            style={styles.urlInput}
           />
-        </Input>
+        </View>
 
-        <HStack gap="$2">
-          <Button variant="outline" borderColor="#3f3f46" flex={1} onPress={handlePaste}>
-            <ButtonText color="#fff">Coller</ButtonText>
-          </Button>
-          <Button bg="#6366f1" flex={1} onPress={() => analyze(url)} isDisabled={loading}>
-            {loading ? <Spinner color="$white" /> : <ButtonText color="#fff">Analyser</ButtonText>}
-          </Button>
-        </HStack>
+        <View style={styles.actionRow}>
+          <Pressable
+            onPress={handlePaste}
+            style={({ pressed }) => [
+              styles.btnSecondary,
+              { flex: 1 },
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Text style={styles.btnSecondaryText}>Coller</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => analyze(url)}
+            disabled={loading}
+            style={({ pressed }) => [
+              styles.btnPrimary,
+              { flex: 1 },
+              loading && styles.btnDisabled,
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            {loading ? (
+              <ActivityIndicator color={colors.paper} />
+            ) : (
+              <Text style={styles.btnPrimaryText}>Analyser</Text>
+            )}
+          </Pressable>
+        </View>
 
         {error && (
-          <Alert action="error" variant="solid" bg="#3f1d1d" borderColor="#7f1d1d" borderWidth={1}>
-            <AlertText color="#fecaca">{error}</AlertText>
-          </Alert>
+          <View style={styles.errorCard}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
         )}
 
         {info && (
-          <VStack bg="#17171d" borderRadius="$xl" p="$3" gap="$3" borderWidth={1} borderColor="#27272e">
-            <HStack justifyContent="space-between" alignItems="center">
-              <Badge action={info.platform === 'tiktok' ? 'muted' : 'error'} variant="solid">
-                <BadgeText>{info.platform.toUpperCase()}</BadgeText>
-              </Badge>
-              {recipe.detected && (
-                <Badge action="success" variant="solid">
-                  <BadgeText>RECETTE DÉTECTÉE</BadgeText>
-                </Badge>
+          <>
+            <StepLabel index={2} label="Aperçu" done />
+
+            <View style={styles.previewCard}>
+              <View style={styles.previewBadges}>
+                <PlatformBadge platform={info.platform} />
+                {recipe.detected && <RecipePill />}
+              </View>
+
+              {info.thumbnail ? (
+                <Image
+                  source={{ uri: info.thumbnail }}
+                  style={styles.previewImage}
+                  resizeMode="cover"
+                />
+              ) : null}
+
+              {cleanTitle ? (
+                <Text style={styles.previewTitle}>{cleanTitle}</Text>
+              ) : null}
+
+              {(cleanAuthor || info.authorHandle) && (
+                <Text style={styles.previewAuthor}>
+                  {cleanAuthor}
+                  {info.authorHandle ? (
+                    <Text style={styles.previewHandle}>
+                      {cleanAuthor ? ' · ' : ''}@{info.authorHandle}
+                    </Text>
+                  ) : null}
+                </Text>
               )}
-            </HStack>
 
-            {info.thumbnail && (
-              <Image
-                source={{ uri: info.thumbnail }}
-                alt="thumbnail"
-                w="100%"
-                aspectRatio={9 / 16}
-                maxHeight={360}
-                borderRadius="$md"
-                bg="#0b0b0f"
-              />
-            )}
+              {recipe.ingredients.length > 0 && (
+                <View style={styles.previewRecipeBlock}>
+                  <Text style={styles.previewRecipeLabel}>
+                    Ingrédients ({recipe.ingredients.length})
+                  </Text>
+                  {recipe.ingredients.slice(0, 5).map((ing, i) => (
+                    <Text key={i} style={styles.previewRecipeItem}>
+                      • {ing}
+                    </Text>
+                  ))}
+                  {recipe.ingredients.length > 5 && (
+                    <Text style={styles.previewRecipeMore}>
+                      + {recipe.ingredients.length - 5} autres…
+                    </Text>
+                  )}
+                </View>
+              )}
 
-            {(() => {
-              const cleanTitle = extractTitle(info.title, info.platform);
-              return cleanTitle ? (
-                <Text color="#fff" fontSize="$md" fontWeight="$bold">
-                  {cleanTitle}
+              {recipe.steps.length > 0 && (
+                <View style={styles.previewRecipeBlock}>
+                  <Text style={styles.previewRecipeLabel}>
+                    Étapes ({recipe.steps.length})
+                  </Text>
+                  <Text style={styles.previewRecipeItem} numberOfLines={3}>
+                    {recipe.steps[0]}
+                  </Text>
+                </View>
+              )}
+
+              {!recipe.detected && info.title ? (
+                <Text style={styles.previewCaption} numberOfLines={4}>
+                  {info.title}
                 </Text>
-              ) : null;
-            })()}
+              ) : null}
+            </View>
 
-            {info.author && (
-              <Text color="#d4d4d8" fontSize="$sm" fontWeight="$semibold">
-                {stripEmojis(info.author)}
-                {info.authorHandle ? <Text color="#a1a1aa"> @{info.authorHandle}</Text> : null}
-              </Text>
-            )}
+            <StepLabel index={3} label="Ranger dans un dossier" done={selectedFolders.size > 0} />
 
-            {recipe.ingredients.length > 0 && (
-              <VStack gap="$1">
-                <Text color="#a1a1aa" fontSize="$xs" letterSpacing={1}>
-                  INGRÉDIENTS ({recipe.ingredients.length})
-                </Text>
-                {recipe.ingredients.slice(0, 5).map((ing, i) => (
-                  <Text key={i} color="#d4d4d8" fontSize="$sm">• {ing}</Text>
-                ))}
-                {recipe.ingredients.length > 5 && (
-                  <Text color="#71717a" fontSize="$xs">+ {recipe.ingredients.length - 5} autres…</Text>
-                )}
-              </VStack>
-            )}
-
-            {recipe.steps.length > 0 && (
-              <VStack gap="$1">
-                <Text color="#a1a1aa" fontSize="$xs" letterSpacing={1}>
-                  ÉTAPES ({recipe.steps.length})
-                </Text>
-                <Text color="#d4d4d8" fontSize="$sm" numberOfLines={3}>
-                  {recipe.steps[0]}
-                </Text>
-              </VStack>
-            )}
-
-            {!recipe.detected && info.title && (
-              <Text color="#d4d4d8" fontSize="$sm" numberOfLines={4}>
-                {info.title}
-              </Text>
-            )}
-
-            <VStack gap="$2" mt="$2">
-              <Text color="#a1a1aa" fontSize="$xs" letterSpacing={1}>DOSSIERS</Text>
+            <View style={styles.foldersBlock}>
               {folders.length === 0 ? (
-                <Text color="#71717a" fontSize="$xs">
-                  Sera enregistré dans "{DEFAULT_FOLDER_NAME}".
+                <Text style={styles.muted}>
+                  Sera enregistré dans « {DEFAULT_FOLDER_NAME} ».
                 </Text>
               ) : (
                 <>
-                  <HStack flexWrap="wrap" gap="$2">
-                    {folders.map((f) => {
-                      const active = selectedFolders.has(f.id);
-                      return (
-                        <Pressable key={f.id} onPress={() => toggleFolder(f.id)}>
-                          <Box
-                            bg={active ? '#6366f1' : '#0b0b0f'}
-                            borderColor={active ? '#6366f1' : '#3f3f46'}
-                            borderWidth={1}
-                            borderRadius="$full"
-                            px="$3"
-                            py="$2"
-                          >
-                            <Text
-                              color={active ? '#fff' : '#d4d4d8'}
-                              fontSize="$sm"
-                              fontWeight="$semibold"
-                            >
-                              {active ? '✓ ' : ''}{f.name}
-                            </Text>
-                          </Box>
-                        </Pressable>
-                      );
-                    })}
-                  </HStack>
+                  <View style={styles.chipRow}>
+                    {folders.map((f) => (
+                      <FolderChip
+                        key={f.id}
+                        label={f.name}
+                        active={selectedFolders.has(f.id)}
+                        onPress={() => toggleFolder(f.id)}
+                      />
+                    ))}
+                  </View>
                   {selectedFolders.size === 0 && (
-                    <Text color="#71717a" fontSize="$xs">
-                      Rien sélectionné → enregistré dans "{DEFAULT_FOLDER_NAME}"
+                    <Text style={styles.muted}>
+                      Rien sélectionné → enregistré dans « {DEFAULT_FOLDER_NAME} »
                     </Text>
                   )}
                 </>
               )}
-            </VStack>
+            </View>
 
-            <Button bg="#6366f1" onPress={handleSave} isDisabled={saving}>
-              {saving ? <Spinner color="$white" /> : <ButtonText color="#fff">Enregistrer</ButtonText>}
-            </Button>
-          </VStack>
+            <Pressable
+              onPress={handleSave}
+              disabled={saving}
+              style={({ pressed }) => [
+                styles.btnPrimary,
+                { paddingVertical: 16 },
+                saving && styles.btnDisabled,
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              {saving ? (
+                <ActivityIndicator color={colors.paper} />
+              ) : (
+                <Text style={[styles.btnPrimaryText, { fontSize: 16 }]}>
+                  Enregistrer le reel
+                </Text>
+              )}
+            </Pressable>
+          </>
         )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
+
+function StepLabel({
+  index,
+  label,
+  done,
+}: {
+  index: number;
+  label: string;
+  done: boolean;
+}) {
+  return (
+    <View style={styles.stepRow}>
+      <View style={[styles.stepBubble, done && styles.stepBubbleDone]}>
+        {done ? (
+          <Text style={styles.stepBubbleCheck}>✓</Text>
+        ) : (
+          <Text style={styles.stepBubbleNum}>{index}</Text>
+        )}
+      </View>
+      <Text style={styles.stepTitle}>{label}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  stepBubble: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1.5,
+    borderColor: colors.line,
+    backgroundColor: colors.paperElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBubbleDone: {
+    backgroundColor: colors.ink,
+    borderColor: colors.ink,
+  },
+  stepBubbleNum: {
+    color: colors.inkMuted,
+    fontFamily: fonts.serifBold,
+    fontSize: 13,
+  },
+  stepBubbleCheck: {
+    color: colors.paper,
+    fontFamily: fonts.serifBold,
+    fontSize: 13,
+  },
+  stepTitle: {
+    color: colors.ink,
+    fontFamily: fonts.serifBold,
+    fontSize: 18,
+  },
+  stepHint: {
+    color: colors.inkMuted,
+    fontSize: 13,
+    marginLeft: 36,
+  },
+  urlWrap: {
+    marginTop: -8,
+  },
+  urlInput: {
+    backgroundColor: colors.paperElevated,
+    borderColor: colors.line,
+    borderWidth: 1,
+    borderRadius: radii.lg,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: colors.ink,
+    fontFamily: fonts.serifRegular,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: -8,
+  },
+  btnPrimary: {
+    backgroundColor: colors.ink,
+    paddingVertical: 14,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnPrimaryText: {
+    color: colors.paper,
+    fontFamily: fonts.serifBold,
+    fontSize: 14,
+  },
+  btnSecondary: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingVertical: 14,
+    borderRadius: radii.pill,
+    backgroundColor: colors.paperElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnSecondaryText: {
+    color: colors.ink,
+    fontFamily: fonts.serifBold,
+    fontSize: 14,
+  },
+  btnDisabled: {
+    opacity: 0.5,
+  },
+  errorCard: {
+    padding: 14,
+    backgroundColor: colors.dangerSoft,
+    borderColor: colors.danger,
+    borderWidth: 1,
+    borderRadius: radii.md,
+  },
+  errorText: {
+    color: colors.danger,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  previewCard: {
+    backgroundColor: colors.paperElevated,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: 16,
+    gap: 12,
+  },
+  previewBadges: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  previewImage: {
+    width: '100%',
+    aspectRatio: 9 / 16,
+    maxHeight: 380,
+    borderRadius: radii.md,
+    backgroundColor: colors.paperSunken,
+  },
+  previewTitle: {
+    color: colors.ink,
+    fontFamily: fonts.serifBold,
+    fontSize: 20,
+    lineHeight: 26,
+    letterSpacing: -0.3,
+  },
+  previewAuthor: {
+    color: colors.ink,
+    fontFamily: fonts.serifBold,
+    fontSize: 14,
+  },
+  previewHandle: {
+    color: colors.inkMuted,
+    fontFamily: fonts.serifRegular,
+    fontSize: 13,
+  },
+  previewRecipeBlock: {
+    gap: 4,
+    marginTop: 4,
+  },
+  previewRecipeLabel: {
+    color: colors.accent,
+    fontFamily: fonts.serifBold,
+    fontSize: 12,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  previewRecipeItem: {
+    color: colors.ink,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  previewRecipeMore: {
+    color: colors.inkFaint,
+    fontSize: 12,
+  },
+  previewCaption: {
+    color: colors.inkMuted,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  foldersBlock: {
+    gap: 8,
+    marginTop: -8,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  muted: {
+    color: colors.inkFaint,
+    fontSize: 13,
+  },
+});

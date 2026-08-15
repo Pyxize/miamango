@@ -1,40 +1,33 @@
-import {
-  Box,
-  VStack,
-  HStack,
-  Text,
-  Button,
-  ButtonText,
-  Image,
-  Badge,
-  BadgeText,
-  Spinner,
-  AlertDialog,
-  AlertDialogBackdrop,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogBody,
-  AlertDialogFooter,
-  Heading,
-  Pressable,
-} from '../../src/ui';
+import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Linking, ScrollView } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Clipboard from 'expo-clipboard';
 import {
-  getReel,
-  deleteReel,
-  SavedReel,
-  listFolders,
-  Folder,
-  listFoldersForReel,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { colors, fonts, radii } from '../../src/theme';
+import {
   addReelToFolder,
+  deleteReel,
+  Folder,
+  getReel,
+  listFolders,
+  listFoldersForReel,
   removeReelFromFolder,
+  SavedReel,
 } from '../../src/repo';
 import { deleteThumbnail } from '../../src/thumbnails';
-import { extractTitle, stripEmojis, profileUrl } from '../../src/text';
+import { extractTitle, profileUrl, stripEmojis } from '../../src/text';
+import { FolderChip, PlatformBadge, RecipePill } from '../../src/components';
 
 export default function ReelDetailScreen() {
   const { id, from } = useLocalSearchParams<{ id: string; from?: string }>();
@@ -43,14 +36,16 @@ export default function ReelDetailScreen() {
   const [reel, setReel] = useState<SavedReel | null>(null);
   const [loading, setLoading] = useState(true);
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [assignedFolderIds, setAssignedFolderIds] = useState<Set<number>>(new Set());
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [removeFromFolderOpen, setRemoveFromFolderOpen] = useState(false);
+  const [assignedFolderIds, setAssignedFolderIds] = useState<Set<number>>(
+    new Set()
+  );
   const [showRawCaption, setShowRawCaption] = useState(false);
 
   const decodedId = id ? decodeURIComponent(id) : null;
   const fromFolderId = from && !isNaN(Number(from)) ? Number(from) : null;
-  const fromFolder = fromFolderId ? folders.find((f) => f.id === fromFolderId) : null;
+  const fromFolder = fromFolderId
+    ? folders.find((f) => f.id === fromFolderId)
+    : null;
 
   const load = useCallback(async () => {
     if (!decodedId) return;
@@ -81,17 +76,17 @@ export default function ReelDetailScreen() {
 
   if (loading) {
     return (
-      <Box flex={1} bg="$black" justifyContent="center" alignItems="center">
-        <Spinner color="$white" />
-      </Box>
+      <View style={styles.center}>
+        <ActivityIndicator color={colors.ink} />
+      </View>
     );
   }
 
   if (!reel) {
     return (
-      <Box flex={1} bg="$black" justifyContent="center" alignItems="center">
-        <Text color="#a1a1aa">Reel introuvable</Text>
-      </Box>
+      <View style={styles.center}>
+        <Text style={styles.notFound}>Reel introuvable</Text>
+      </View>
     );
   }
 
@@ -101,22 +96,50 @@ export default function ReelDetailScreen() {
   const cleanAuthor = stripEmojis(reel.author);
   const profileHref = profileUrl(reel.platform, reel.authorHandle);
 
-  const handleDelete = async () => {
-    await deleteThumbnail(reel.thumbnailLocalPath);
-    await deleteReel(reel.id);
-    setConfirmOpen(false);
-    router.back();
+  const confirmDelete = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      fromFolder ? 'Supprimer partout ?' : 'Supprimer ce reel ?',
+      "Ce reel sera retiré de tous tes dossiers et définitivement supprimé de ta liste. Le reel original TikTok / Instagram n'est pas affecté.",
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteThumbnail(reel.thumbnailLocalPath);
+            await deleteReel(reel.id);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            router.back();
+          },
+        },
+      ]
+    );
   };
 
-  const handleRemoveFromCurrentFolder = async () => {
-    if (!fromFolderId) return;
-    await removeReelFromFolder(reel.id, fromFolderId);
-    setRemoveFromFolderOpen(false);
-    router.back();
+  const confirmRemoveFromFolder = () => {
+    if (!fromFolderId || !fromFolder) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Alert.alert(
+      `Retirer de « ${fromFolder.name} » ?`,
+      "Le reel restera dans tes autres dossiers, et dans « Non classés » s'il n'appartient à aucun autre dossier.",
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Retirer',
+          style: 'destructive',
+          onPress: async () => {
+            await removeReelFromFolder(reel.id, fromFolderId);
+            router.back();
+          },
+        },
+      ]
+    );
   };
 
   const handleCopy = async () => {
     await Clipboard.setStringAsync(reel.canonicalUrl);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   const openProfile = () => {
@@ -125,211 +148,368 @@ export default function ReelDetailScreen() {
 
   return (
     <ScrollView
-      style={{ backgroundColor: '#0b0b0f' }}
-      contentContainerStyle={{ padding: 16, paddingBottom: 24 + insets.bottom }}
+      style={{ backgroundColor: colors.paper }}
+      contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
     >
-      <VStack gap="$3">
-        <HStack justifyContent="space-between" alignItems="center">
-          <Badge action={reel.platform === 'tiktok' ? 'muted' : 'error'} variant="solid">
-            <BadgeText>{reel.platform.toUpperCase()}</BadgeText>
-          </Badge>
-          {hasRecipe && (
-            <Badge action="success" variant="solid">
-              <BadgeText>🍳 RECETTE</BadgeText>
-            </Badge>
-          )}
-        </HStack>
+      {thumb ? (
+        <View style={styles.heroWrap}>
+          <Image source={{ uri: thumb }} style={styles.hero} resizeMode="cover" />
+          <View style={styles.heroBadges}>
+            <PlatformBadge platform={reel.platform} />
+            {hasRecipe && <RecipePill />}
+          </View>
+        </View>
+      ) : (
+        <View style={[styles.heroWrap, styles.heroFallback]}>
+          <View style={styles.heroBadges}>
+            <PlatformBadge platform={reel.platform} />
+            {hasRecipe && <RecipePill />}
+          </View>
+        </View>
+      )}
 
-        {thumb && (
-          <Image
-            source={{ uri: thumb }}
-            alt="thumbnail"
-            w="100%"
-            aspectRatio={9 / 16}
-            maxHeight={420}
-            borderRadius="$md"
-            bg="#17171d"
-          />
-        )}
-
-        {cleanTitle && (
-          <Heading color="#fff" size="lg">
-            {cleanTitle}
-          </Heading>
-        )}
+      <View style={styles.body}>
+        {cleanTitle ? <Text style={styles.title}>{cleanTitle}</Text> : null}
 
         {(cleanAuthor || reel.authorHandle) && (
-          <HStack alignItems="baseline" flexWrap="wrap" gap="$2">
+          <View style={styles.authorRow}>
             {cleanAuthor ? (
-              <Text color="#d4d4d8" fontSize="$md" fontWeight="$semibold">{cleanAuthor}</Text>
+              <Text style={styles.author}>{cleanAuthor}</Text>
             ) : null}
-            {reel.authorHandle && (
-              <Pressable onPress={openProfile}>
-                <Text color="#a5b4fc" fontSize="$md">@{reel.authorHandle} →</Text>
+            {reel.authorHandle ? (
+              <Pressable onPress={openProfile} hitSlop={6}>
+                <Text style={styles.handle}>@{reel.authorHandle} →</Text>
               </Pressable>
-            )}
-          </HStack>
+            ) : null}
+          </View>
         )}
 
-        <VStack gap="$2" mt="$2">
-          <Text color="#a1a1aa" fontSize="$xs" letterSpacing={1}>DOSSIERS</Text>
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Dossiers</Text>
           {folders.length === 0 ? (
-            <Text color="#71717a" fontSize="$sm">
+            <Text style={styles.muted}>
               Aucun dossier. Crée-en depuis l'écran d'accueil.
             </Text>
           ) : (
-            <HStack flexWrap="wrap" gap="$2">
-              {folders.map((f) => {
-                const active = assignedFolderIds.has(f.id);
-                return (
-                  <Pressable key={f.id} onPress={() => toggleFolder(f.id)}>
-                    <Box
-                      bg={active ? '#6366f1' : '#17171d'}
-                      borderColor={active ? '#6366f1' : '#27272e'}
-                      borderWidth={1}
-                      borderRadius="$full"
-                      px="$3"
-                      py="$2"
-                    >
-                      <Text color={active ? '#fff' : '#d4d4d8'} fontSize="$sm" fontWeight="$semibold">
-                        {active ? '✓ ' : ''}{f.name}
-                      </Text>
-                    </Box>
-                  </Pressable>
-                );
-              })}
-            </HStack>
+            <View style={styles.chipRow}>
+              {folders.map((f) => (
+                <FolderChip
+                  key={f.id}
+                  label={f.name}
+                  active={assignedFolderIds.has(f.id)}
+                  onPress={() => toggleFolder(f.id)}
+                />
+              ))}
+            </View>
           )}
-        </VStack>
+        </View>
 
         {reel.ingredients.length > 0 && (
-          <VStack gap="$2" mt="$3" bg="#17171d" p="$3" borderRadius="$xl" borderWidth={1} borderColor="#27272e">
-            <Text color="#a5b4fc" fontSize="$xs" letterSpacing={1} fontWeight="$bold">
-              INGRÉDIENTS
-            </Text>
-            {reel.ingredients.map((ing, i) => (
-              <HStack key={i} gap="$2" alignItems="flex-start">
-                <Text color="#6366f1" fontSize="$sm">•</Text>
-                <Text color="#fafafa" fontSize="$sm" flex={1}>{stripEmojis(ing)}</Text>
-              </HStack>
-            ))}
-          </VStack>
+          <View style={styles.recipeCard}>
+            <Text style={styles.recipeLabel}>Ingrédients</Text>
+            <View style={{ gap: 8 }}>
+              {reel.ingredients.map((ing, i) => (
+                <View key={i} style={styles.ingredientRow}>
+                  <View style={styles.bullet} />
+                  <Text style={styles.ingredientText}>{stripEmojis(ing)}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
         )}
 
         {reel.steps.length > 0 && (
-          <VStack gap="$3" mt="$2" bg="#17171d" p="$3" borderRadius="$xl" borderWidth={1} borderColor="#27272e">
-            <Text color="#a5b4fc" fontSize="$xs" letterSpacing={1} fontWeight="$bold">
-              ÉTAPES
-            </Text>
-            {reel.steps.map((step, i) => (
-              <HStack key={i} gap="$3" alignItems="flex-start">
-                <Box bg="#6366f1" borderRadius="$full" w={22} h={22} justifyContent="center" alignItems="center">
-                  <Text color="#fff" fontSize="$xs" fontWeight="$bold">{i + 1}</Text>
-                </Box>
-                <Text color="#fafafa" fontSize="$sm" flex={1} lineHeight={22}>{stripEmojis(step)}</Text>
-              </HStack>
-            ))}
-          </VStack>
+          <View style={styles.recipeCard}>
+            <Text style={styles.recipeLabel}>Étapes</Text>
+            <View style={{ gap: 14 }}>
+              {reel.steps.map((step, i) => (
+                <View key={i} style={styles.stepRow}>
+                  <View style={styles.stepBadge}>
+                    <Text style={styles.stepBadgeText}>{i + 1}</Text>
+                  </View>
+                  <Text style={styles.stepText}>{stripEmojis(step)}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
         )}
 
-        {reel.title && (
+        {reel.title ? (
           <Pressable onPress={() => setShowRawCaption(!showRawCaption)}>
-            <HStack justifyContent="space-between" alignItems="center" mt="$2" py="$2">
-              <Text color="#71717a" fontSize="$xs" letterSpacing={1}>
-                CAPTION ORIGINALE
-              </Text>
-              <Text color="#71717a" fontSize="$xs">
+            <View style={styles.captionToggleRow}>
+              <Text style={styles.sectionLabel}>Caption originale</Text>
+              <Text style={styles.captionToggle}>
                 {showRawCaption ? 'Masquer' : 'Afficher'}
               </Text>
-            </HStack>
+            </View>
           </Pressable>
-        )}
+        ) : null}
 
-        {showRawCaption && reel.title && (
-          <Text color="#a1a1aa" fontSize="$xs" lineHeight={18}>
-            {stripEmojis(reel.title)}
-          </Text>
-        )}
+        {showRawCaption && reel.title ? (
+          <Text style={styles.caption}>{stripEmojis(reel.title)}</Text>
+        ) : null}
 
-        <VStack gap="$2" mt="$3">
-          <Button bg="#6366f1" onPress={() => Linking.openURL(reel.canonicalUrl)}>
-            <ButtonText color="#fff">Ouvrir dans le navigateur</ButtonText>
-          </Button>
-          <Button variant="outline" borderColor="#3f3f46" onPress={handleCopy}>
-            <ButtonText color="#fff">Copier le lien</ButtonText>
-          </Button>
-          {fromFolder && (
-            <Button action="negative" bg="#7f1d1d" onPress={() => setRemoveFromFolderOpen(true)}>
-              <ButtonText color="#fff">Retirer de "{fromFolder.name}"</ButtonText>
-            </Button>
-          )}
-          <Button
-            action="negative"
-            variant="outline"
-            borderColor="#7f1d1d"
-            onPress={() => setConfirmOpen(true)}
+        <View style={styles.actions}>
+          <Pressable
+            onPress={() => Linking.openURL(reel.canonicalUrl)}
+            style={({ pressed }) => [
+              styles.btnPrimary,
+              pressed && { opacity: 0.85 },
+            ]}
           >
-            <ButtonText color="#fecaca">
-              {fromFolder ? 'Supprimer partout' : 'Supprimer'}
-            </ButtonText>
-          </Button>
-        </VStack>
-
-        <Text color="#52525b" fontSize="$xs" mt="$1">{reel.canonicalUrl}</Text>
-      </VStack>
-
-      <AlertDialog isOpen={confirmOpen} onClose={() => setConfirmOpen(false)}>
-        <AlertDialogBackdrop />
-        <AlertDialogContent bg="#17171d">
-          <AlertDialogHeader>
-            <Heading color="#fff" size="md">Supprimer partout ?</Heading>
-          </AlertDialogHeader>
-          <AlertDialogBody>
-            <Text color="#a1a1aa">
-              Ce reel sera retiré de tous tes dossiers et définitivement supprimé de ta liste.
-              Le reel original TikTok / Instagram n'est pas affecté.
-            </Text>
-          </AlertDialogBody>
-          <AlertDialogFooter>
-            <Button variant="outline" borderColor="#3f3f46" mr="$2" onPress={() => setConfirmOpen(false)}>
-              <ButtonText color="#fff">Annuler</ButtonText>
-            </Button>
-            <Button action="negative" bg="#7f1d1d" onPress={handleDelete}>
-              <ButtonText color="#fff">Supprimer partout</ButtonText>
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog isOpen={removeFromFolderOpen} onClose={() => setRemoveFromFolderOpen(false)}>
-        <AlertDialogBackdrop />
-        <AlertDialogContent bg="#17171d">
-          <AlertDialogHeader>
-            <Heading color="#fff" size="md">
-              Retirer de "{fromFolder?.name}" ?
-            </Heading>
-          </AlertDialogHeader>
-          <AlertDialogBody>
-            <Text color="#a1a1aa">
-              Le reel restera dans tes autres dossiers et dans "Non classés" s'il n'appartient à
-              aucun autre dossier.
-            </Text>
-          </AlertDialogBody>
-          <AlertDialogFooter>
-            <Button
-              variant="outline"
-              borderColor="#3f3f46"
-              mr="$2"
-              onPress={() => setRemoveFromFolderOpen(false)}
+            <Text style={styles.btnPrimaryText}>Ouvrir dans le navigateur</Text>
+          </Pressable>
+          <Pressable
+            onPress={handleCopy}
+            style={({ pressed }) => [
+              styles.btnSecondary,
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Text style={styles.btnSecondaryText}>Copier le lien</Text>
+          </Pressable>
+          {fromFolder && (
+            <Pressable
+              onPress={confirmRemoveFromFolder}
+              style={({ pressed }) => [
+                styles.btnDangerSoft,
+                pressed && { opacity: 0.85 },
+              ]}
             >
-              <ButtonText color="#fff">Annuler</ButtonText>
-            </Button>
-            <Button action="negative" bg="#7f1d1d" onPress={handleRemoveFromCurrentFolder}>
-              <ButtonText color="#fff">Retirer</ButtonText>
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              <Text style={styles.btnDangerSoftText}>
+                Retirer de « {fromFolder.name} »
+              </Text>
+            </Pressable>
+          )}
+          <Pressable
+            onPress={confirmDelete}
+            style={({ pressed }) => [
+              styles.btnDangerGhost,
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Text style={styles.btnDangerGhostText}>
+              {fromFolder ? 'Supprimer partout' : 'Supprimer'}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  center: {
+    flex: 1,
+    backgroundColor: colors.paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notFound: {
+    color: colors.inkMuted,
+    fontSize: 15,
+  },
+  heroWrap: {
+    aspectRatio: 4 / 3,
+    maxHeight: 420,
+    backgroundColor: colors.paperSunken,
+    position: 'relative',
+  },
+  hero: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  heroFallback: {
+    minHeight: 200,
+  },
+  heroBadges: {
+    position: 'absolute',
+    left: 16,
+    top: 16,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  body: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    gap: 16,
+  },
+  title: {
+    color: colors.ink,
+    fontFamily: fonts.serifBold,
+    fontSize: 28,
+    lineHeight: 34,
+    letterSpacing: -0.4,
+  },
+  authorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    gap: 8,
+  },
+  author: {
+    color: colors.ink,
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+  },
+  handle: {
+    color: colors.accent,
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+  },
+  section: {
+    gap: 8,
+    marginTop: 4,
+  },
+  sectionLabel: {
+    color: colors.inkMuted,
+    fontFamily: fonts.serifBold,
+    fontSize: 12,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  muted: {
+    color: colors.inkFaint,
+    fontSize: 14,
+  },
+  recipeCard: {
+    backgroundColor: colors.paperElevated,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: 18,
+    gap: 14,
+  },
+  recipeLabel: {
+    color: colors.accent,
+    fontFamily: fonts.serifBold,
+    fontSize: 13,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+  },
+  ingredientRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  bullet: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+    marginTop: 8,
+  },
+  ingredientText: {
+    color: colors.ink,
+    fontSize: 15,
+    lineHeight: 22,
+    flex: 1,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    gap: 14,
+    alignItems: 'flex-start',
+  },
+  stepBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  stepBadgeText: {
+    color: colors.paper,
+    fontFamily: fonts.serifBold,
+    fontSize: 13,
+  },
+  stepText: {
+    color: colors.ink,
+    fontSize: 15,
+    lineHeight: 22,
+    flex: 1,
+  },
+  captionToggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+    marginTop: 4,
+  },
+  captionToggle: {
+    color: colors.inkMuted,
+    fontSize: 13,
+    fontFamily: fonts.serifBold,
+  },
+  caption: {
+    color: colors.inkMuted,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  actions: {
+    gap: 10,
+    marginTop: 8,
+  },
+  btnPrimary: {
+    backgroundColor: colors.ink,
+    paddingVertical: 14,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+  },
+  btnPrimaryText: {
+    color: colors.paper,
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+  },
+  btnSecondary: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+    backgroundColor: colors.paperElevated,
+    alignItems: 'center',
+  },
+  btnSecondaryText: {
+    color: colors.ink,
+    fontFamily: fonts.serifBold,
+    fontSize: 14,
+  },
+  btnDangerSoft: {
+    backgroundColor: colors.dangerSoft,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+  },
+  btnDangerSoftText: {
+    color: colors.danger,
+    fontFamily: fonts.serifBold,
+    fontSize: 14,
+  },
+  btnDangerGhost: {
+    borderWidth: 1,
+    borderColor: colors.danger,
+    paddingVertical: 12,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  btnDangerGhostText: {
+    color: colors.danger,
+    fontFamily: fonts.serifBold,
+    fontSize: 14,
+  },
+  canonical: {
+    color: colors.inkFaint,
+    fontSize: 11,
+    marginTop: 8,
+  },
+});

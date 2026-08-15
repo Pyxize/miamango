@@ -4,13 +4,36 @@ import { Stack, useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import { useShareIntent } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
+import {
+  useFonts,
+  Fraunces_400Regular,
+  Fraunces_400Regular_Italic,
+  Fraunces_500Medium,
+  Fraunces_600SemiBold,
+  Fraunces_700Bold,
+} from '@expo-google-fonts/fraunces';
+import { colors, fonts } from '../src/theme';
+
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   const router = useRouter();
+  const [fontsLoaded, fontError] = useFonts({
+    Fraunces_400Regular,
+    Fraunces_400Regular_Italic,
+    Fraunces_500Medium,
+    Fraunces_600SemiBold,
+    Fraunces_700Bold,
+  });
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent({
     debug: false,
     resetOnBackground: true,
   });
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded, fontError]);
 
   useEffect(() => {
     if (!hasShareIntent) return;
@@ -21,18 +44,25 @@ export default function RootLayout() {
     resetShareIntent();
   }, [hasShareIntent, shareIntent, resetShareIntent, router]);
 
+  if (!fontsLoaded && !fontError) return null;
+
   return (
     <GluestackUIProvider config={config}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: '#0b0b0f' },
-          headerTintColor: '#fff',
-          contentStyle: { backgroundColor: '#0b0b0f' },
+          headerStyle: { backgroundColor: colors.paper },
+          headerTintColor: colors.ink,
+          headerTitleStyle: { fontFamily: fonts.serifBold, fontSize: 18, color: colors.ink },
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: colors.paper },
         }}
       >
         <Stack.Screen name="index" options={{ title: 'Mes reels' }} />
-        <Stack.Screen name="add" options={{ title: 'Ajouter', presentation: 'modal' }} />
+        <Stack.Screen
+          name="add"
+          options={{ title: 'Ajouter', presentation: 'modal' }}
+        />
         <Stack.Screen name="reel/[id]" options={{ title: 'Détail' }} />
         <Stack.Screen name="folder/[id]" options={{ title: 'Dossier' }} />
       </Stack>
