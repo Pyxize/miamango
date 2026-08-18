@@ -1,5 +1,6 @@
 import { getSql, ensureSchema, DEFAULT_FOLDER_NAME } from './db';
 import { Platform } from './scraper';
+import { EMPTY_METADATA, RecipeMetadata, Difficulty } from './recipe';
 
 export { DEFAULT_FOLDER_NAME };
 
@@ -11,12 +12,15 @@ export type SavedReel = {
   author: string | null;
   authorHandle: string | null;
   title: string | null;
+  recipeTitle: string | null;
   thumbnailUrl: string | null;
   thumbnailLocalPath: string | null;
   videoId: string | null;
   createdAt: number;
   ingredients: string[];
   steps: string[];
+  checkedIngredients: boolean[];
+  metadata: RecipeMetadata;
 };
 
 export type Folder = {
@@ -42,6 +46,24 @@ function coerceStringArray(raw: unknown): string[] {
   return [];
 }
 
+function coerceBoolArray(raw: unknown, length: number): boolean[] {
+  const asArray = (v: unknown): boolean[] | null => {
+    if (Array.isArray(v)) return v.map((x) => x === true);
+    return null;
+  };
+  let arr = asArray(raw);
+  if (!arr && typeof raw === 'string') {
+    try {
+      arr = asArray(JSON.parse(raw));
+    } catch {}
+  }
+  const out = new Array(length).fill(false);
+  if (arr) {
+    for (let i = 0; i < Math.min(length, arr.length); i++) out[i] = arr[i];
+  }
+  return out;
+}
+
 function toNumber(v: any): number {
   if (typeof v === 'number') return v;
   if (typeof v === 'bigint') return Number(v);
@@ -49,7 +71,37 @@ function toNumber(v: any): number {
   return 0;
 }
 
+function coerceInt(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+  if (typeof v === 'bigint') return Number(v);
+  if (typeof v === 'string') {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.trunc(n) : null;
+  }
+  return null;
+}
+
+function coerceDifficulty(v: unknown): Difficulty | null {
+  if (v === 'facile' || v === 'moyen' || v === 'difficile') return v;
+  return null;
+}
+
+function rowToMetadata(row: any): RecipeMetadata {
+  const prep = coerceInt(row.prep_minutes);
+  const cook = coerceInt(row.cook_minutes);
+  const total = prep != null && cook != null ? prep + cook : prep ?? cook;
+  return {
+    prepMinutes: prep,
+    cookMinutes: cook,
+    totalMinutes: total,
+    servings: coerceInt(row.servings),
+    difficulty: coerceDifficulty(row.difficulty),
+  };
+}
+
 function rowToReel(row: any): SavedReel {
+  const ingredients = coerceStringArray(row.ingredients);
   return {
     id: row.id,
     platform: row.platform as Platform,
@@ -58,12 +110,15 @@ function rowToReel(row: any): SavedReel {
     author: row.author,
     authorHandle: row.author_handle,
     title: row.title,
+    recipeTitle: row.recipe_title ?? null,
     thumbnailUrl: row.thumbnail_url,
     thumbnailLocalPath: row.thumbnail_local_path,
     videoId: row.video_id,
     createdAt: toNumber(row.created_at),
-    ingredients: coerceStringArray(row.ingredients),
+    ingredients,
     steps: coerceStringArray(row.steps),
+    checkedIngredients: coerceBoolArray(row.checked_ingredients, ingredients.length),
+    metadata: rowToMetadata(row),
   };
 }
 
@@ -71,7 +126,15 @@ export function makeId(platform: Platform, videoId: string | null, url: string):
   return `${platform}:${videoId ?? url}`;
 }
 
-export type InsertReelInput = Omit<SavedReel, 'createdAt'> & { createdAt?: number };
+export type InsertReelInput = Omit<
+  SavedReel,
+  'createdAt' | 'checkedIngredients' | 'metadata' | 'recipeTitle'
+> & {
+  createdAt?: number;
+  checkedIngredients?: boolean[];
+  recipeTitle?: string | null;
+  metadata?: RecipeMetadata;
+};
 
 export async function insertReel(reel: InsertReelInput): Promise<void> {
   await ensureSchema();
@@ -79,19 +142,24 @@ export async function insertReel(reel: InsertReelInput): Promise<void> {
   const createdAt = reel.createdAt ?? Date.now();
   const ingredients = JSON.stringify(reel.ingredients ?? []);
   const steps = JSON.stringify(reel.steps ?? []);
+  const checked = JSON.stringify(new Array((reel.ingredients ?? []).length).fill(false));
+  const meta = reel.metadata ?? EMPTY_METADATA;
 
   await sql`
     INSERT INTO reels (
-      id, platform, url, canonical_url, author, author_handle, title,
+      id, platform, url, canonical_url, author, author_handle, title, recipe_title,
       thumbnail_url, thumbnail_local_path, video_id, created_at,
-      ingredients, steps
+      ingredients, steps, checked_ingredients,
+      prep_minutes, cook_minutes, servings, difficulty
     ) VALUES (
       ${reel.id}, ${reel.platform}, ${reel.url}, ${reel.canonicalUrl},
-      ${reel.author ?? null}, ${reel.authorHandle ?? null}, ${reel.title ?? null},
+      ${reel.author ?? null}, ${reel.authorHandle ?? null}, ${reel.title ?? null}, ${reel.recipeTitle ?? null},
       ${reel.thumbnailUrl ?? null}, ${reel.thumbnailLocalPath ?? null}, ${reel.videoId ?? null},
       ${createdAt},
       ${ingredients}::jsonb,
-      ${steps}::jsonb
+      ${steps}::jsonb,
+      ${checked}::jsonb,
+      ${meta.prepMinutes}, ${meta.cookMinutes}, ${meta.servings}, ${meta.difficulty}
     )
     ON CONFLICT (id) DO UPDATE SET
       url = EXCLUDED.url,
@@ -99,11 +167,17 @@ export async function insertReel(reel: InsertReelInput): Promise<void> {
       author = EXCLUDED.author,
       author_handle = EXCLUDED.author_handle,
       title = EXCLUDED.title,
+      recipe_title = EXCLUDED.recipe_title,
       thumbnail_url = EXCLUDED.thumbnail_url,
       thumbnail_local_path = EXCLUDED.thumbnail_local_path,
       video_id = EXCLUDED.video_id,
       ingredients = EXCLUDED.ingredients,
-      steps = EXCLUDED.steps
+      steps = EXCLUDED.steps,
+      checked_ingredients = EXCLUDED.checked_ingredients,
+      prep_minutes = EXCLUDED.prep_minutes,
+      cook_minutes = EXCLUDED.cook_minutes,
+      servings = EXCLUDED.servings,
+      difficulty = EXCLUDED.difficulty
   `;
 }
 
@@ -174,6 +248,59 @@ export async function deleteReel(id: string): Promise<void> {
   await ensureSchema();
   const sql = getSql();
   await sql`DELETE FROM reels WHERE id = ${id}`;
+}
+
+export async function updateReelChecked(
+  id: string,
+  checked: boolean[]
+): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  const payload = JSON.stringify(checked);
+  await sql`UPDATE reels SET checked_ingredients = ${payload}::jsonb WHERE id = ${id}`;
+}
+
+export type UpdateReelPatch = {
+  title?: string | null;
+  recipeTitle?: string | null;
+  ingredients?: string[];
+  steps?: string[];
+  metadata?: RecipeMetadata;
+};
+
+export async function updateReel(id: string, patch: UpdateReelPatch): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  const title = patch.title ?? null;
+  const recipeTitle = patch.recipeTitle ?? null;
+  const ingredients = JSON.stringify(patch.ingredients ?? []);
+  const steps = JSON.stringify(patch.steps ?? []);
+  const meta = patch.metadata ?? EMPTY_METADATA;
+
+  if (patch.ingredients !== undefined) {
+    const checked = JSON.stringify(new Array(patch.ingredients.length).fill(false));
+    await sql`UPDATE reels
+              SET title = ${title},
+                  recipe_title = ${recipeTitle},
+                  ingredients = ${ingredients}::jsonb,
+                  steps = ${steps}::jsonb,
+                  checked_ingredients = ${checked}::jsonb,
+                  prep_minutes = ${meta.prepMinutes},
+                  cook_minutes = ${meta.cookMinutes},
+                  servings = ${meta.servings},
+                  difficulty = ${meta.difficulty}
+              WHERE id = ${id}`;
+  } else {
+    await sql`UPDATE reels
+              SET title = ${title},
+                  recipe_title = ${recipeTitle},
+                  steps = ${steps}::jsonb,
+                  prep_minutes = ${meta.prepMinutes},
+                  cook_minutes = ${meta.cookMinutes},
+                  servings = ${meta.servings},
+                  difficulty = ${meta.difficulty}
+              WHERE id = ${id}`;
+  }
 }
 
 export async function countReels(): Promise<number> {

@@ -27,7 +27,7 @@ export default function RootLayout() {
     Fraunces_700Bold,
   });
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent({
-    debug: false,
+    debug: __DEV__,
     resetOnBackground: true,
   });
 
@@ -38,8 +38,15 @@ export default function RootLayout() {
   useEffect(() => {
     if (!hasShareIntent) return;
     const url = shareIntent.webUrl ?? extractUrl(shareIntent.text);
+    if (__DEV__) {
+      console.log('[share-intent] received', {
+        webUrl: shareIntent.webUrl,
+        text: shareIntent.text,
+        extractedUrl: url,
+      });
+    }
     if (url) {
-      router.push({ pathname: '/add', params: { url } });
+      router.replace({ pathname: '/add', params: { url } });
     }
     resetShareIntent();
   }, [hasShareIntent, shareIntent, resetShareIntent, router]);

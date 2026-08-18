@@ -43,8 +43,16 @@ async function initSchema(): Promise<void> {
     video_id TEXT,
     created_at BIGINT NOT NULL,
     ingredients JSONB,
-    steps JSONB
+    steps JSONB,
+    checked_ingredients JSONB
   )`;
+
+  await sql`ALTER TABLE reels ADD COLUMN IF NOT EXISTS checked_ingredients JSONB`;
+  await sql`ALTER TABLE reels ADD COLUMN IF NOT EXISTS recipe_title TEXT`;
+  await sql`ALTER TABLE reels ADD COLUMN IF NOT EXISTS prep_minutes INT`;
+  await sql`ALTER TABLE reels ADD COLUMN IF NOT EXISTS cook_minutes INT`;
+  await sql`ALTER TABLE reels ADD COLUMN IF NOT EXISTS servings INT`;
+  await sql`ALTER TABLE reels ADD COLUMN IF NOT EXISTS difficulty TEXT`;
 
   await sql`CREATE INDEX IF NOT EXISTS idx_reels_created_at ON reels(created_at DESC)`;
 

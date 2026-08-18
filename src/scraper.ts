@@ -240,6 +240,26 @@ export async function fetchTikTok(
  *
  * Récupération des Open Graph metadata.
  */
+/**
+ * Extrait la légende depuis un texte au format Instagram OG :
+ *   'Author on Instagram: "…caption…"'
+ *   'N likes, N comments - handle on date: "…caption…"'
+ * Retourne le contenu entre guillemets, ou null si aucun pattern reconnu.
+ * Supporte guillemets droits, typographiques et « » français.
+ */
+function extractInstagramCaption(raw: string | null): string | null {
+  if (!raw) return null;
+  const match = raw.match(/[:\-–—]\s*["“”«»](.+)["“”«»]\s*\.?\s*$/s);
+  if (match) return match[1].trim();
+  const openIdx = raw.search(/["“”«»]/);
+  if (openIdx >= 0) {
+    const rest = raw.slice(openIdx + 1);
+    const closeIdx = rest.search(/["“”«»](?=\s*\.?\s*$)/);
+    if (closeIdx > 0) return rest.slice(0, closeIdx).trim();
+  }
+  return null;
+}
+
 export async function fetchInstagram(
     url: string,
 ): Promise<ReelInfo> {
@@ -290,6 +310,14 @@ export async function fetchInstagram(
       'twitter:title',
   );
 
+  if (__DEV__) {
+    console.log('[scraper.instagram] meta', {
+      ogTitleLen: ogTitle?.length ?? 0,
+      ogDescriptionLen: ogDescription?.length ?? 0,
+      twitterTitle,
+    });
+  }
+
   const canonicalUrl =
       ogUrl ?? url;
 
@@ -304,26 +332,44 @@ export async function fetchInstagram(
   let author: string | null = null;
 
   /**
-   * Exemple fréquent :
+   * twitterTitle : ""
+   *   → auteur + handle uniquement, PAS la légende.
+   * ogTitle : 'Author on Instagram: "…caption…"'
+   *   → contient la vraie légende.
+   * ogDescription : 'N likes, N comments - handle on date: "…caption…"'
+   *   → contient la légende aussi, avec un préfixe stats.
    *
-   * "Maxime BNT (@maximebnt) • Instagram photos..."
+   * On veut :
+   *   - `author` = nom d'affichage (Twitter title est le plus propre)
+   *   - `title`  = la légende brute (ce que parseRecipe attend)
    */
-  const title =
-      twitterTitle ??
-      ogTitle ??
-      null;
-
-  if (title) {
-    const authorMatch = title.match(
+  if (twitterTitle) {
+    const authorMatch = twitterTitle.match(
         /^(.+?)\s*\(@([^)]+)\)/,
     );
-
     if (authorMatch) {
       author = authorMatch[1].trim();
       authorHandle =
           authorHandle ??
           authorMatch[2].trim();
     }
+  }
+
+  const caption =
+      extractInstagramCaption(ogTitle) ??
+      extractInstagramCaption(ogDescription) ??
+      ogDescription ??
+      ogTitle ??
+      twitterTitle ??
+      null;
+
+  const title = caption;
+
+  if (!author && ogTitle) {
+    const ogAuthorMatch = ogTitle.match(
+        /^(.+?)\s+on\s+Instagram/i,
+    );
+    if (ogAuthorMatch) author = ogAuthorMatch[1].trim();
   }
 
   return {
@@ -362,6 +408,8 @@ export async function fetchReelInfo(
     url: string,
 ): Promise<ReelInfo> {
   const normalizedUrl = url.trim();
+
+  if (__DEV__) console.log('[scraper] fetchReelInfo', normalizedUrl);
 
   if (!normalizedUrl) {
     throw new Error('URL vide');

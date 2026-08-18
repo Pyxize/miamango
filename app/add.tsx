@@ -27,7 +27,7 @@ import {
   makeId,
 } from '../src/repo';
 import { cacheThumbnail } from '../src/thumbnails';
-import { parseRecipe, ParsedRecipe } from '../src/recipe';
+import { parseRecipe, ParsedRecipe, RecipeMetadata } from '../src/recipe';
 import { extractTitle, stripEmojis } from '../src/text';
 import { FolderChip, PlatformBadge, RecipePill } from '../src/components';
 
@@ -104,11 +104,13 @@ export default function AddScreen() {
         author: info.author,
         authorHandle: info.authorHandle,
         title: info.title,
+        recipeTitle: recipe.title,
         thumbnailUrl: info.thumbnail,
         thumbnailLocalPath: localThumb,
         videoId: info.videoId,
         ingredients: recipe.ingredients,
         steps: recipe.steps,
+        metadata: recipe.metadata,
       });
 
       const targets: number[] = Array.from(selectedFolders);
@@ -133,8 +135,9 @@ export default function AddScreen() {
     }
   };
 
-  const cleanTitle = info ? extractTitle(info.title, info.platform) : null;
+  const cleanTitle = info ? recipe.title ?? extractTitle(info.title, info.platform) : null;
   const cleanAuthor = info?.author ? stripEmojis(info.author) : null;
+  const metaChips = formatMetadataChips(recipe.metadata);
 
   return (
     <KeyboardAvoidingView
@@ -205,6 +208,18 @@ export default function AddScreen() {
           </View>
         )}
 
+        {loading && !info && (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator color={colors.ink} size="small" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.loadingTitle}>Analyse en cours…</Text>
+              <Text style={styles.loadingHint}>
+                On récupère la vidéo et on extrait les ingrédients.
+              </Text>
+            </View>
+          </View>
+        )}
+
         {info && (
           <>
             <StepLabel index={2} label="Aperçu" done />
@@ -236,6 +251,16 @@ export default function AddScreen() {
                     </Text>
                   ) : null}
                 </Text>
+              )}
+
+              {metaChips.length > 0 && (
+                <View style={styles.metaChipsRow}>
+                  {metaChips.map((chip) => (
+                    <View key={chip} style={styles.metaChip}>
+                      <Text style={styles.metaChipText}>{chip}</Text>
+                    </View>
+                  ))}
+                </View>
               )}
 
               {recipe.ingredients.length > 0 && (
@@ -325,6 +350,30 @@ export default function AddScreen() {
       </ScrollView>
     </KeyboardAvoidingView>
   );
+}
+
+function formatMetadataChips(meta: RecipeMetadata): string[] {
+  const chips: string[] = [];
+  const total = meta.totalMinutes ?? (meta.prepMinutes ?? 0) + (meta.cookMinutes ?? 0);
+  if (total > 0) {
+    if (total >= 60) {
+      const h = Math.floor(total / 60);
+      const m = total % 60;
+      chips.push(m ? `⏱ ${h} h ${m}` : `⏱ ${h} h`);
+    } else {
+      chips.push(`⏱ ${total} min`);
+    }
+  } else if (meta.prepMinutes) {
+    chips.push(`⏱ ${meta.prepMinutes} min prep`);
+  } else if (meta.cookMinutes) {
+    chips.push(`⏱ ${meta.cookMinutes} min cuisson`);
+  }
+  if (meta.servings) chips.push(`👥 ${meta.servings} pers`);
+  if (meta.difficulty) {
+    const label = meta.difficulty.charAt(0).toUpperCase() + meta.difficulty.slice(1);
+    chips.push(`⭐ ${label}`);
+  }
+  return chips;
 }
 
 function StepLabel({
@@ -450,6 +499,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
+  loadingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    padding: 16,
+    backgroundColor: colors.paperElevated,
+    borderColor: colors.line,
+    borderWidth: 1,
+    borderRadius: radii.lg,
+  },
+  loadingTitle: {
+    color: colors.ink,
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    marginBottom: 2,
+  },
+  loadingHint: {
+    color: colors.inkMuted,
+    fontSize: 13,
+    lineHeight: 18,
+  },
   previewCard: {
     backgroundColor: colors.paperElevated,
     borderRadius: radii.xl,
@@ -512,6 +582,25 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
     fontSize: 13,
     lineHeight: 19,
+  },
+  metaChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 2,
+  },
+  metaChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.paper,
+  },
+  metaChipText: {
+    color: colors.ink,
+    fontFamily: fonts.serifBold,
+    fontSize: 12,
   },
   foldersBlock: {
     gap: 8,
